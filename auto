@@ -1,5 +1,5 @@
 --====================================================
--- FISH AUTO FARM + FISH SELECTOR + ESP
+-- FISH AUTO FARM + FISH SELECTOR + ESP + PLAYER TP + SHOP
 -- RAYFIELD GUI
 --====================================================
 
@@ -55,6 +55,8 @@ local Window = Rayfield:CreateWindow({
 local FarmTab = Window:CreateTab("Auto Farm", 4483362458)
 local ESPTab = Window:CreateTab("ESP", 4483362458)
 local SettingsTab = Window:CreateTab("Settings", 4483362458)
+local PlayerTab = Window:CreateTab("Player", 4483362458)
+local ShopTab = Window:CreateTab("Shop", 4483362458)
 
 --====================================================
 -- REMOTES
@@ -839,6 +841,390 @@ CreateESPToggle("ESP Distance", "Distance", "ESPDistance")
 CreateESPToggle("ESP Stickman", "Stickman", "ESPStickman")
 
 --====================================================
+-- PLAYER / TELEPORT SYSTEM
+--====================================================
+
+local SelectedPlayer = nil
+local AutoTPEnabled = false
+local AutoTPSession = 0
+local TPDelay = 0.3
+
+local function GetPlayerList()
+    local List = {}
+
+    for _, Player in ipairs(Players:GetPlayers()) do
+        if Player ~= LocalPlayer then
+            table.insert(List, Player.Name)
+        end
+    end
+
+    table.sort(List)
+    return List
+end
+
+local function GetSelectedPlayer()
+    if not SelectedPlayer then
+        return nil
+    end
+
+    return Players:FindFirstChild(SelectedPlayer)
+end
+
+local function TeleportToPlayer()
+    local Target = GetSelectedPlayer()
+
+    if not Target then
+        return false, "Player tidak ditemukan"
+    end
+
+    local MyCharacter = LocalPlayer.Character
+    local TargetCharacter = Target.Character
+
+    if not MyCharacter or not TargetCharacter then
+        return false, "Character belum tersedia"
+    end
+
+    local MyRoot = MyCharacter:FindFirstChild("HumanoidRootPart")
+    local TargetRoot = TargetCharacter:FindFirstChild("HumanoidRootPart")
+
+    if not MyRoot or not TargetRoot then
+        return false, "HumanoidRootPart tidak ditemukan"
+    end
+
+    local Success = pcall(function()
+        MyRoot.CFrame = TargetRoot.CFrame * CFrame.new(0, 0, 3)
+    end)
+
+    if Success then
+        return true, "Teleport ke " .. Target.Name
+    end
+
+    return false, "Teleport gagal"
+end
+
+-- Player UI
+PlayerTab:CreateSection("Player Selector")
+
+local PlayerDropdown = PlayerTab:CreateDropdown({
+    Name = "Select Player",
+    Options = GetPlayerList(),
+    CurrentOption = {},
+    MultipleOptions = false,
+    Flag = "SelectedTPPlayer",
+
+    Callback = function(Options)
+        local Name = typeof(Options) == "table"
+            and Options[1] or Options
+
+        if Name and Players:FindFirstChild(Name) then
+            SelectedPlayer = Name
+
+            Rayfield:Notify({
+                Title = "Player Selected",
+                Content = "Selected: " .. Name,
+                Duration = 3,
+                Image = 4483362458
+            })
+        end
+    end
+})
+
+local function RefreshPlayerList()
+    if Destroyed then return end
+
+    local List = GetPlayerList()
+    PlayerDropdown:Refresh(List, true)
+
+    if SelectedPlayer
+        and not Players:FindFirstChild(SelectedPlayer) then
+
+        SelectedPlayer = nil
+        AutoTPEnabled = false
+        AutoTPSession = AutoTPSession + 1
+    end
+end
+
+PlayerTab:CreateButton({
+    Name = "Refresh Player List",
+
+    Callback = function()
+        RefreshPlayerList()
+
+        Rayfield:Notify({
+            Title = "Player List",
+            Content = "Player list refreshed!",
+            Duration = 3,
+            Image = 4483362458
+        })
+    end
+})
+
+PlayerTab:CreateSection("Teleport")
+
+PlayerTab:CreateButton({
+    Name = "Teleport To Selected Player",
+
+    Callback = function()
+        local Success, Message = TeleportToPlayer()
+
+        Rayfield:Notify({
+            Title = Success and "Teleport Success" or "Teleport Failed",
+            Content = Message,
+            Duration = 4,
+            Image = 4483362458
+        })
+    end
+})
+
+PlayerTab:CreateToggle({
+    Name = "Auto TP Selected Player",
+    CurrentValue = false,
+    Flag = "AutoTPPlayer",
+
+    Callback = function(Value)
+        AutoTPEnabled = Value
+        AutoTPSession = AutoTPSession + 1
+
+        local Session = AutoTPSession
+
+        if Value then
+            if not GetSelectedPlayer() then
+                AutoTPEnabled = false
+
+                Rayfield:Notify({
+                    Title = "Auto TP",
+                    Content = "Pilih player terlebih dahulu!",
+                    Duration = 4,
+                    Image = 4483362458
+                })
+
+                return
+            end
+
+            task.spawn(function()
+                while AutoTPEnabled
+                    and AutoTPSession == Session
+                    and not Destroyed do
+
+                    local Target = GetSelectedPlayer()
+
+                    if not Target or not Target.Character then
+                        -- target left or no character; stop auto tp
+                        AutoTPEnabled = false
+                        break
+                    end
+
+                    local MyChar = LocalPlayer.Character
+                    local MyRoot = MyChar and MyChar:FindFirstChild("HumanoidRootPart")
+                    local TargetRoot = Target.Character and Target.Character:FindFirstChild("HumanoidRootPart")
+
+                    if MyRoot and TargetRoot then
+                        pcall(function()
+                            MyRoot.CFrame = TargetRoot.CFrame * CFrame.new(0, 0, 3)
+                        end)
+                    end
+
+                    task.wait(TPDelay)
+                end
+            end)
+        end
+
+        Rayfield:Notify({
+            Title = "Auto TP",
+            Content = Value and "Auto TP Enabled" or "Auto TP Disabled",
+            Duration = 3,
+            Image = 4483362458
+        })
+    end
+})
+
+PlayerTab:CreateSlider({
+    Name = "Auto TP Delay",
+    Range = {0.1, 3},
+    Increment = 0.1,
+    Suffix = "Seconds",
+    CurrentValue = 0.3,
+    Flag = "AutoTPDelay",
+
+    Callback = function(Value)
+        TPDelay = Value
+    end
+})
+
+-- Auto refresh player list
+AddConnection(Players.PlayerAdded:Connect(function()
+    if not Destroyed then
+        task.defer(RefreshPlayerList)
+    end
+end))
+
+AddConnection(Players.PlayerRemoving:Connect(function(Player)
+    if Player.Name == SelectedPlayer then
+        SelectedPlayer = nil
+        AutoTPEnabled = false
+        AutoTPSession = AutoTPSession + 1
+    end
+
+    if not Destroyed then
+        task.defer(RefreshPlayerList)
+    end
+end))
+
+-- initial refresh
+task.defer(RefreshPlayerList)
+
+--====================================================
+-- SHOP SETTINGS / GUI
+--====================================================
+
+local ShopItems = {
+    "Roti",
+    "Rokok",
+    "Air Mineral",
+    "Udang"
+}
+
+local SelectedItem = ShopItems[1]
+local BuyAmount = 1
+local Buying = false
+
+ShopTab:CreateSection("Item Shop")
+
+ShopTab:CreateDropdown({
+    Name = "Select Item",
+    Options = ShopItems,
+    CurrentOption = {SelectedItem},
+    MultipleOptions = false,
+    Flag = "ShopItem",
+
+    Callback = function(Options)
+        local Item = typeof(Options) == "table"
+            and Options[1] or Options
+
+        if Item and table.find(ShopItems, Item) then
+            SelectedItem = Item
+
+            Rayfield:Notify({
+                Title = "Shop",
+                Content = "Selected: " .. Item,
+                Duration = 3,
+                Image = 4483362458
+            })
+        end
+    end
+})
+
+ShopTab:CreateInput({
+    Name = "Buy Amount",
+    CurrentValue = "1",
+    PlaceholderText = "Masukkan jumlah...",
+    RemoveTextAfterFocusLost = false,
+    Flag = "ShopAmount",
+
+    Callback = function(Value)
+        local Amount = tonumber(Value)
+
+        if Amount
+            and Amount > 0
+            and Amount == math.floor(Amount) then
+
+            BuyAmount = Amount
+        else
+            BuyAmount = nil
+        end
+    end
+})
+
+ShopTab:CreateButton({
+    Name = "Buy Selected Item",
+
+    Callback = function()
+        if Buying then
+            Rayfield:Notify({
+                Title = "Shop",
+                Content = "Pembelian sedang diproses!",
+                Duration = 3,
+                Image = 4483362458
+            })
+
+            return
+        end
+
+        if not BuyAmount or BuyAmount < 1 then
+            Rayfield:Notify({
+                Title = "Invalid Amount",
+                Content = "Masukkan jumlah pembelian yang valid!",
+                Duration = 4,
+                Image = 4483362458
+            })
+
+            return
+        end
+
+        Buying = true
+
+        task.spawn(function()
+            local Item = SelectedItem
+            local Amount = BuyAmount
+
+            local Success, Result = pcall(function()
+                return BuyEvent:InvokeServer(Item, Amount)
+            end)
+
+            Buying = false
+
+            if Destroyed then return end
+
+            if Success and Result ~= false then
+                Rayfield:Notify({
+                    Title = "Shop Request Sent",
+                    Content = Item .. " x" .. Amount .. " - Permintaan pembelian diproses.",
+                    Duration = 5,
+                    Image = 4483362458
+                })
+            else
+                Rayfield:Notify({
+                    Title = "Buy Failed",
+                    Content = "Gagal membeli " .. Item,
+                    Duration = 5,
+                    Image = 4483362458
+                })
+            end
+        end)
+    end
+})
+
+-- Quick buy buttons (x1)
+ShopTab:CreateSection("Quick Buy")
+
+for _, Item in ipairs(ShopItems) do
+    ShopTab:CreateButton({
+        Name = "Buy " .. Item .. " x1",
+
+        Callback = function()
+            task.spawn(function()
+                local Success, Result = pcall(function()
+                    return BuyEvent:InvokeServer(Item, 1)
+                end)
+
+                if Destroyed then return end
+
+                Rayfield:Notify({
+                    Title = Success and Result ~= false
+                        and "Shop Request Sent"
+                        or "Buy Failed",
+
+                    Content = Item .. " x1",
+
+                    Duration = 4,
+                    Image = 4483362458
+                })
+            end)
+        end
+    })
+end
+
+--====================================================
 -- SETTINGS GUI
 --====================================================
 
@@ -904,6 +1290,10 @@ Global.FishFarmCleanup = function()
     FarmEnabled = false
     FarmSession = FarmSession + 1
 
+    -- stop auto tp if running
+    AutoTPEnabled = false
+    AutoTPSession = (AutoTPSession or 0) + 1
+
     for _, Connection in ipairs(Connections) do
         pcall(function()
             Connection:Disconnect()
@@ -922,7 +1312,7 @@ end
 
 Rayfield:Notify({
     Title = "Fish Auto Farm",
-    Content = "Auto Farm + Fish Selector + ESP Loaded!",
+    Content = "Auto Farm + Fish Selector + ESP + Player TP + Shop Loaded!",
     Duration = 5,
     Image = 4483362458
 })
