@@ -1,0 +1,928 @@
+--====================================================
+-- FISH AUTO FARM + FISH SELECTOR + ESP
+-- RAYFIELD GUI
+--====================================================
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+--====================================================
+-- CLEANUP OLD SCRIPT
+--====================================================
+
+local Global = getgenv()
+
+if Global.FishFarmCleanup then
+    pcall(Global.FishFarmCleanup)
+end
+
+local Connections = {}
+local ESPObjects = {}
+
+local FarmEnabled = false
+local FarmSession = 0
+local Destroyed = false
+
+local function AddConnection(Connection)
+    table.insert(Connections, Connection)
+    return Connection
+end
+
+--====================================================
+-- RAYFIELD
+--====================================================
+
+local Rayfield = loadstring(game:HttpGet(
+    "https://sirius.menu/rayfield"
+))()
+
+local Window = Rayfield:CreateWindow({
+    Name = "🐟 Fish Farm | Auto Farm + ESP",
+    LoadingTitle = "Fish Auto Farm",
+    LoadingSubtitle = "Fish Selector & ESP",
+
+    ConfigurationSaving = {
+        Enabled = false
+    },
+
+    KeySystem = false
+})
+
+local FarmTab = Window:CreateTab("Auto Farm", 4483362458)
+local ESPTab = Window:CreateTab("ESP", 4483362458)
+local SettingsTab = Window:CreateTab("Settings", 4483362458)
+
+--====================================================
+-- REMOTES
+--====================================================
+
+local FishingSystem = ReplicatedStorage:WaitForChild("FishingSystem")
+
+local BuyEvent = ReplicatedStorage
+    :WaitForChild("Event")
+    :WaitForChild("BuyItemFunction")
+
+local FishEvent = FishingSystem:WaitForChild("FishGiver")
+
+local SellEvent = ReplicatedStorage
+    :WaitForChild("Events")
+    :WaitForChild("DisnakerFunction")
+
+local FishModels = FishingSystem
+    :WaitForChild("Assets")
+    :WaitForChild("FishModels")
+
+--====================================================
+-- SETTINGS
+--====================================================
+
+local FarmDelay = 0.1
+local MaxNoDecrease = 5
+
+local SelectedFish = "Ancient Whale"
+
+local FishData = {
+    hookPosition = Vector3.new(
+        194.20976257324219,
+        -447.85006713867188,
+        2401.007568359375
+    ),
+
+    name = SelectedFish,
+    rarity = "Epic",
+    weight = 59.2
+}
+
+--====================================================
+-- FISH LIST
+--====================================================
+
+local function GetFishList()
+
+    local List = {}
+
+    for _, Fish in ipairs(FishModels:GetChildren()) do
+        table.insert(List, Fish.Name)
+    end
+
+    table.sort(List)
+
+    return List
+end
+
+local FishList = GetFishList()
+
+if #FishList > 0 then
+
+    if not FishModels:FindFirstChild(SelectedFish) then
+        SelectedFish = FishList[1]
+    end
+
+end
+
+FishData.name = SelectedFish
+
+--====================================================
+-- INVENTORY
+--====================================================
+
+local function GetInventoryContainer()
+
+    local InventoryUI = PlayerGui:FindFirstChild("InventoryUI")
+    if not InventoryUI then return nil end
+
+    local MainFrame = InventoryUI:FindFirstChild("MainFrame")
+    if not MainFrame then return nil end
+
+    local LeftPanel = MainFrame:FindFirstChild("LeftPanel")
+    if not LeftPanel then return nil end
+
+    local InventoryBox = LeftPanel:FindFirstChild("InventoryBox")
+    if not InventoryBox then return nil end
+
+    return InventoryBox:FindFirstChild("Container")
+end
+
+local function GetUdangAmount()
+
+    local Container = GetInventoryContainer()
+    if not Container then return nil end
+
+    local Total = 0
+
+    for _, Slot in ipairs(Container:GetChildren()) do
+
+        if Slot.Name:match("^InvSlot_%d+$") then
+
+            local ItemName = Slot:FindFirstChild("ItemName", true)
+            local ItemAmount = Slot:FindFirstChild("ItemAmount", true)
+
+            if ItemName and ItemAmount then
+
+                if ItemName:IsA("TextLabel")
+                    or ItemName:IsA("TextButton") then
+
+                    local Name = string.upper(ItemName.Text)
+
+                    if Name:find("UDANG", 1, true) then
+
+                        local Amount = 0
+
+                        if ItemAmount:IsA("TextLabel")
+                            or ItemAmount:IsA("TextButton") then
+
+                            Amount = tonumber(
+                                ItemAmount.Text:match("%d+")
+                            ) or 0
+
+                        end
+
+                        Total = Total + Amount
+
+                    end
+                end
+            end
+        end
+    end
+
+    return Total
+end
+
+--====================================================
+-- BUY / FISH / SELL
+--====================================================
+
+local function BuyUdang(IsActive)
+
+    for i = 1, 2 do
+
+        if IsActive and not IsActive() then
+            return
+        end
+
+        pcall(function()
+            BuyEvent:InvokeServer("Udang", 50)
+        end)
+
+        task.wait(0.2)
+    end
+end
+
+local function GiveFish()
+
+    local Data = {
+        hookPosition = FishData.hookPosition,
+        name = SelectedFish,
+        rarity = FishData.rarity,
+        weight = FishData.weight
+    }
+
+    pcall(function()
+        FishEvent:FireServer(Data)
+    end)
+
+end
+
+local function SellAll()
+
+    pcall(function()
+        SellEvent:InvokeServer("SellAll", "All")
+    end)
+
+end
+
+--====================================================
+-- AUTO FARM
+--====================================================
+
+local function StartFarm(Session)
+
+    local NoDecrease = 0
+
+    local function IsActive()
+        return FarmEnabled
+            and FarmSession == Session
+            and not Destroyed
+    end
+
+    while IsActive() do
+
+        local Amount = GetUdangAmount()
+
+        if Amount == nil then
+
+            task.wait(1)
+
+        elseif Amount <= 0 then
+
+            SellAll()
+
+            task.wait(0.5)
+
+            if not IsActive() then
+                break
+            end
+
+            BuyUdang(IsActive)
+
+            NoDecrease = 0
+
+            task.wait(0.5)
+
+        else
+
+            GiveFish()
+
+            task.wait(FarmDelay)
+
+            if not IsActive() then
+                break
+            end
+
+            local NewAmount = GetUdangAmount()
+
+            if NewAmount ~= nil then
+
+                if NewAmount < Amount then
+
+                    NoDecrease = 0
+
+                else
+
+                    NoDecrease = NoDecrease + 1
+
+                end
+
+                if NoDecrease >= MaxNoDecrease then
+
+                    SellAll()
+
+                    task.wait(0.5)
+
+                    if not IsActive() then
+                        break
+                    end
+
+                    local CurrentAmount = GetUdangAmount()
+
+                    if CurrentAmount == 0 then
+                        BuyUdang(IsActive)
+                    end
+
+                    NoDecrease = 0
+
+                    task.wait(0.5)
+
+                end
+            end
+        end
+    end
+end
+
+--====================================================
+-- FARM GUI
+--====================================================
+
+FarmTab:CreateSection("Fish Selection")
+
+local FishDropdown = FarmTab:CreateDropdown({
+    Name = "Select Fish",
+    Options = FishList,
+    CurrentOption = {SelectedFish},
+    MultipleOptions = false,
+    Flag = "FishSelector",
+
+    Callback = function(Options)
+
+        local FishName = typeof(Options) == "table"
+            and Options[1] or Options
+
+        if FishName and FishModels:FindFirstChild(FishName) then
+
+            SelectedFish = FishName
+            FishData.name = FishName
+
+            Rayfield:Notify({
+                Title = "Fish Selected",
+                Content = FishName,
+                Duration = 3,
+                Image = 4483362458
+            })
+
+        end
+    end
+})
+
+local function RefreshFishList()
+
+    local NewList = GetFishList()
+
+    FishDropdown:Refresh(NewList, true)
+
+    if #NewList > 0 and
+        not FishModels:FindFirstChild(SelectedFish) then
+
+        SelectedFish = NewList[1]
+        FishData.name = SelectedFish
+
+        FishDropdown:Set({SelectedFish})
+    end
+
+end
+
+FarmTab:CreateButton({
+    Name = "Refresh Fish List",
+
+    Callback = function()
+        RefreshFishList()
+    end
+})
+
+AddConnection(FishModels.ChildAdded:Connect(function()
+    if not Destroyed then
+        task.defer(RefreshFishList)
+    end
+end))
+
+AddConnection(FishModels.ChildRemoved:Connect(function()
+    if not Destroyed then
+        task.defer(RefreshFishList)
+    end
+end))
+
+FarmTab:CreateSection("Auto Farm")
+
+FarmTab:CreateToggle({
+    Name = "Auto Farm Selected Fish",
+    CurrentValue = false,
+    Flag = "AutoFarm",
+
+    Callback = function(Value)
+
+        if FarmEnabled == Value then
+            return
+        end
+
+        FarmEnabled = Value
+        FarmSession = FarmSession + 1
+
+        if Value then
+
+            local Session = FarmSession
+
+            task.spawn(function()
+                StartFarm(Session)
+            end)
+
+        end
+    end
+})
+
+FarmTab:CreateButton({
+    Name = "Check Udang Amount",
+
+    Callback = function()
+
+        local Amount = GetUdangAmount()
+
+        Rayfield:Notify({
+            Title = "Inventory Udang",
+            Content = Amount ~= nil
+                and ("Udang: " .. Amount)
+                or "Inventory tidak ditemukan",
+            Duration = 4,
+            Image = 4483362458
+        })
+
+    end
+})
+
+FarmTab:CreateButton({
+    Name = "Buy Udang 2x50",
+
+    Callback = function()
+        task.spawn(BuyUdang)
+    end
+})
+
+FarmTab:CreateButton({
+    Name = "Sell All",
+
+    Callback = function()
+        task.spawn(SellAll)
+    end
+})
+
+--====================================================
+-- ESP SETTINGS
+--====================================================
+
+local ESPSettings = {
+    Enabled = false,
+    Box = false,
+    Line = false,
+    Name = false,
+    Health = false,
+    Distance = false,
+    Stickman = false,
+    MaxDistance = 2000,
+    Color = Color3.fromRGB(0, 255, 170)
+}
+
+--====================================================
+-- DRAWING
+--====================================================
+
+local function NewDrawing(Type)
+
+    local Object = Drawing.new(Type)
+    Object.Visible = false
+
+    return Object
+end
+
+local function CreateESP(Player)
+
+    if Player == LocalPlayer then return end
+    if ESPObjects[Player] then return end
+
+    local ESP = {}
+
+    ESP.Box = NewDrawing("Square")
+    ESP.Box.Filled = false
+    ESP.Box.Thickness = 1.5
+
+    ESP.Line = NewDrawing("Line")
+    ESP.Line.Thickness = 1.5
+
+    ESP.Name = NewDrawing("Text")
+    ESP.Name.Size = 14
+    ESP.Name.Center = true
+    ESP.Name.Outline = true
+
+    ESP.Health = NewDrawing("Text")
+    ESP.Health.Size = 13
+    ESP.Health.Center = true
+    ESP.Health.Outline = true
+
+    ESP.Distance = NewDrawing("Text")
+    ESP.Distance.Size = 13
+    ESP.Distance.Center = true
+    ESP.Distance.Outline = true
+
+    ESP.Stickman = {}
+
+    for i = 1, 15 do
+
+        local Line = NewDrawing("Line")
+        Line.Thickness = 1.5
+
+        table.insert(ESP.Stickman, Line)
+
+    end
+
+    ESPObjects[Player] = ESP
+end
+
+local function HideESP(ESP)
+
+    ESP.Box.Visible = false
+    ESP.Line.Visible = false
+    ESP.Name.Visible = false
+    ESP.Health.Visible = false
+    ESP.Distance.Visible = false
+
+    for _, Line in ipairs(ESP.Stickman) do
+        Line.Visible = false
+    end
+end
+
+local function RemoveESP(Player)
+
+    local ESP = ESPObjects[Player]
+    if not ESP then return end
+
+    ESP.Box:Remove()
+    ESP.Line:Remove()
+    ESP.Name:Remove()
+    ESP.Health:Remove()
+    ESP.Distance:Remove()
+
+    for _, Line in ipairs(ESP.Stickman) do
+        Line:Remove()
+    end
+
+    ESPObjects[Player] = nil
+end
+
+--====================================================
+-- STICKMAN BONES
+--====================================================
+
+local R15Bones = {
+    {"Head", "UpperTorso"},
+    {"UpperTorso", "LowerTorso"},
+
+    {"UpperTorso", "LeftUpperArm"},
+    {"LeftUpperArm", "LeftLowerArm"},
+    {"LeftLowerArm", "LeftHand"},
+
+    {"UpperTorso", "RightUpperArm"},
+    {"RightUpperArm", "RightLowerArm"},
+    {"RightLowerArm", "RightHand"},
+
+    {"LowerTorso", "LeftUpperLeg"},
+    {"LeftUpperLeg", "LeftLowerLeg"},
+    {"LeftLowerLeg", "LeftFoot"},
+
+    {"LowerTorso", "RightUpperLeg"},
+    {"RightUpperLeg", "RightLowerLeg"},
+    {"RightLowerLeg", "RightFoot"}
+}
+
+local R6Bones = {
+    {"Head", "Torso"},
+    {"Torso", "Left Arm"},
+    {"Torso", "Right Arm"},
+    {"Torso", "Left Leg"},
+    {"Torso", "Right Leg"}
+}
+
+local function UpdateStickman(Character, ESP, Camera)
+
+    local Bones = Character:FindFirstChild("Torso")
+        and R6Bones or R15Bones
+
+    for i, Line in ipairs(ESP.Stickman) do
+
+        Line.Visible = false
+
+        local Pair = Bones[i]
+
+        if Pair then
+
+            local Part1 = Character:FindFirstChild(Pair[1])
+            local Part2 = Character:FindFirstChild(Pair[2])
+
+            if Part1 and Part2 then
+
+                local Pos1, Visible1 =
+                    Camera:WorldToViewportPoint(Part1.Position)
+
+                local Pos2, Visible2 =
+                    Camera:WorldToViewportPoint(Part2.Position)
+
+                if Visible1 and Visible2 then
+
+                    Line.From = Vector2.new(Pos1.X, Pos1.Y)
+                    Line.To = Vector2.new(Pos2.X, Pos2.Y)
+
+                    Line.Color = ESPSettings.Color
+                    Line.Visible = true
+                end
+            end
+        end
+    end
+end
+
+--====================================================
+-- UPDATE ESP
+--====================================================
+
+local function UpdateESP(Player, ESP, Camera)
+
+    if not ESPSettings.Enabled then
+        HideESP(ESP)
+        return
+    end
+
+    local Character = Player.Character
+
+    if not Character then
+        HideESP(ESP)
+        return
+    end
+
+    local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+    local Root = Character:FindFirstChild("HumanoidRootPart")
+
+    if not Humanoid or not Root or Humanoid.Health <= 0 then
+        HideESP(ESP)
+        return
+    end
+
+    local MyCharacter = LocalPlayer.Character
+    local MyRoot = MyCharacter
+        and MyCharacter:FindFirstChild("HumanoidRootPart")
+
+    if not MyRoot then
+        HideESP(ESP)
+        return
+    end
+
+    local Distance = (MyRoot.Position - Root.Position).Magnitude
+
+    if Distance > ESPSettings.MaxDistance then
+        HideESP(ESP)
+        return
+    end
+
+    local RootScreen, Visible =
+        Camera:WorldToViewportPoint(Root.Position)
+
+    if not Visible then
+        HideESP(ESP)
+        return
+    end
+
+    local HeadScreen = Camera:WorldToViewportPoint(
+        Root.Position + Vector3.new(0, 3, 0)
+    )
+
+    local FootScreen = Camera:WorldToViewportPoint(
+        Root.Position - Vector3.new(0, 3, 0)
+    )
+
+    local Height = math.abs(HeadScreen.Y - FootScreen.Y)
+    local Width = Height / 2
+
+    local BoxX = RootScreen.X - Width / 2
+    local BoxY = RootScreen.Y - Height / 2
+
+    -- BOX
+
+    ESP.Box.Visible = ESPSettings.Box
+    ESP.Box.Position = Vector2.new(BoxX, BoxY)
+    ESP.Box.Size = Vector2.new(Width, Height)
+    ESP.Box.Color = ESPSettings.Color
+
+    -- LINE
+
+    ESP.Line.Visible = ESPSettings.Line
+
+    ESP.Line.From = Vector2.new(
+        Camera.ViewportSize.X / 2,
+        Camera.ViewportSize.Y
+    )
+
+    ESP.Line.To = Vector2.new(
+        RootScreen.X,
+        RootScreen.Y
+    )
+
+    ESP.Line.Color = ESPSettings.Color
+
+    -- NAME
+
+    ESP.Name.Visible = ESPSettings.Name
+    ESP.Name.Text = Player.Name
+
+    ESP.Name.Position = Vector2.new(
+        RootScreen.X,
+        BoxY - 18
+    )
+
+    ESP.Name.Color = ESPSettings.Color
+
+    -- HEALTH
+
+    ESP.Health.Visible = ESPSettings.Health
+
+    local HP = math.floor(Humanoid.Health)
+    local MaxHP = math.floor(Humanoid.MaxHealth)
+
+    ESP.Health.Text = "HP: " .. HP .. "/" .. MaxHP
+
+    ESP.Health.Position = Vector2.new(
+        RootScreen.X,
+        BoxY + Height + 3
+    )
+
+    local Percent = math.clamp(
+        Humanoid.Health / math.max(Humanoid.MaxHealth, 1),
+        0,
+        1
+    )
+
+    ESP.Health.Color = Color3.fromRGB(
+        255 * (1 - Percent),
+        255 * Percent,
+        0
+    )
+
+    -- DISTANCE
+
+    ESP.Distance.Visible = ESPSettings.Distance
+    ESP.Distance.Text = math.floor(Distance) .. " studs"
+
+    ESP.Distance.Position = Vector2.new(
+        RootScreen.X,
+        BoxY + Height + 18
+    )
+
+    ESP.Distance.Color = Color3.new(1, 1, 1)
+
+    -- STICKMAN
+
+    if ESPSettings.Stickman then
+
+        UpdateStickman(Character, ESP, Camera)
+
+    else
+
+        for _, Line in ipairs(ESP.Stickman) do
+            Line.Visible = false
+        end
+    end
+end
+
+--====================================================
+-- ESP PLAYER SYSTEM
+--====================================================
+
+for _, Player in ipairs(Players:GetPlayers()) do
+    CreateESP(Player)
+end
+
+AddConnection(Players.PlayerAdded:Connect(CreateESP))
+AddConnection(Players.PlayerRemoving:Connect(RemoveESP))
+
+AddConnection(RunService.RenderStepped:Connect(function()
+
+    if Destroyed then return end
+
+    local Camera = workspace.CurrentCamera
+    if not Camera then return end
+
+    for Player, ESP in pairs(ESPObjects) do
+
+        local Success = pcall(function()
+            UpdateESP(Player, ESP, Camera)
+        end)
+
+        if not Success then
+            HideESP(ESP)
+        end
+    end
+end))
+
+--====================================================
+-- ESP GUI
+--====================================================
+
+ESPTab:CreateSection("Player ESP")
+
+local function CreateESPToggle(Name, Key, Flag)
+
+    ESPTab:CreateToggle({
+        Name = Name,
+        CurrentValue = false,
+        Flag = Flag,
+
+        Callback = function(Value)
+            ESPSettings[Key] = Value
+        end
+    })
+
+end
+
+CreateESPToggle("Enable ESP", "Enabled", "EnableESP")
+CreateESPToggle("ESP Box", "Box", "ESPBox")
+CreateESPToggle("ESP Line", "Line", "ESPLine")
+CreateESPToggle("ESP Name", "Name", "ESPName")
+CreateESPToggle("ESP Health", "Health", "ESPHealth")
+CreateESPToggle("ESP Distance", "Distance", "ESPDistance")
+CreateESPToggle("ESP Stickman", "Stickman", "ESPStickman")
+
+--====================================================
+-- SETTINGS GUI
+--====================================================
+
+SettingsTab:CreateSection("Farm Settings")
+
+SettingsTab:CreateSlider({
+    Name = "Farm Delay",
+    Range = {0.1, 2},
+    Increment = 0.1,
+    Suffix = "Seconds",
+    CurrentValue = 0.1,
+    Flag = "FarmDelay",
+
+    Callback = function(Value)
+        FarmDelay = Value
+    end
+})
+
+SettingsTab:CreateSlider({
+    Name = "Max No Decrease",
+    Range = {1, 20},
+    Increment = 1,
+    CurrentValue = 5,
+    Flag = "MaxNoDecrease",
+
+    Callback = function(Value)
+        MaxNoDecrease = Value
+    end
+})
+
+SettingsTab:CreateSection("ESP Settings")
+
+SettingsTab:CreateSlider({
+    Name = "Max ESP Distance",
+    Range = {100, 10000},
+    Increment = 100,
+    Suffix = "Studs",
+    CurrentValue = 2000,
+    Flag = "MaxESPD",
+
+    Callback = function(Value)
+        ESPSettings.MaxDistance = Value
+    end
+})
+
+SettingsTab:CreateColorPicker({
+    Name = "ESP Color",
+    Color = Color3.fromRGB(0, 255, 170),
+    Flag = "ESPColor",
+
+    Callback = function(Value)
+        ESPSettings.Color = Value
+    end
+})
+
+--====================================================
+-- CLEANUP
+--====================================================
+
+Global.FishFarmCleanup = function()
+
+    Destroyed = true
+    FarmEnabled = false
+    FarmSession = FarmSession + 1
+
+    for _, Connection in ipairs(Connections) do
+        pcall(function()
+            Connection:Disconnect()
+        end)
+    end
+
+    for Player in pairs(ESPObjects) do
+        RemoveESP(Player)
+    end
+
+end
+
+--====================================================
+-- NOTIFICATION
+--====================================================
+
+Rayfield:Notify({
+    Title = "Fish Auto Farm",
+    Content = "Auto Farm + Fish Selector + ESP Loaded!",
+    Duration = 5,
+    Image = 4483362458
+})
